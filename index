@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Personal Journal & Money</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <div id="app" class="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl p-6">
+        <!-- เนื้อหาเรนเดอร์ด้วย JS -->
+    </div>
+
+    <script>
+        // ใช้ Supabase ตัวเดิมของคุณได้เลย
+        const SUPABASE_URL = "https://rzkaqtqzxzegjajfhhop.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_A2XbuxxE-NcYdlca3OWSbw_YsXBocz3";
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let currentUser = JSON.parse(localStorage.getItem('journal_user')) || null;
+        let diaries = [];
+        let transactions = [];
+        let activeTab = 'diary'; // diary หรือ money
+
+        async function init() {
+            if (!currentUser) {
+                renderAuth();
+            } else {
+                await fetchData();
+                renderDashboard();
+            }
+        }
+
+        // หน้าล็อกอิน / สมัครสมาชิก
+        function renderAuth() {
+            document.getElementById('app').innerHTML = `
+                <div class="text-center mb-6">
+                    <h1 class="text-2xl font-bold text-emerald-400">Journal & Money</h1>
+                    <p class="text-sm text-slate-400 mt-1">ไดอารี่และความลับทางการเงินของคุณ</p>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">ชื่อผู้ใช้ (Username)</label>
+                        <input type="text" id="username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="ชื่อผู้ใช้งานของคุณ">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">รหัสผ่าน (Password)</label>
+                        <input type="password" id="pin" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="รหัสผ่าน">
+                    </div>
+                    <div id="auth-error" class="text-red-400 text-xs text-center hidden"></div>
+                    <button onclick="handleLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition shadow-lg shadow-emerald-600/30">เข้าสู่ระบบ</button>
+                    <button onclick="handleRegister()" class="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-3 rounded-xl transition">สร้างบัญชีใหม่</button>
+                </div>
+            `;
+        }
+
+        async function handleLogin() {
+            const u = document.getElementById('username').value.trim();
+            const p = document.getElementById('pin').value.trim();
+            const err = document.getElementById('auth-error');
+
+            if (!u || !p) { err.textContent = 'กรุณากรอกข้อมูลให้ครบถ้วน'; err.classList.remove('hidden'); return; }
+
+            const { data, error } = await supabaseClient.from('journal_users').select('*').eq('username', u).single();
+            if (error || !data || data.pin !== p) { err.textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'; err.classList.remove('hidden'); return; }
+
+            currentUser = data;
+            localStorage.setItem('journal_user', JSON.stringify(currentUser));
+            init();
+        }
+
+        async function handleRegister() {
+            const u = document.getElementById('username').value.trim();
+            const p = document.getElementById('pin').value.trim();
+            const err = document.getElementById('auth-error');
+
+            if (!u || !p) { err.textContent = 'กรุณากรอกข้อมูลให้ครบถ้วน'; err.classList.remove('hidden'); return; }
+
+            // เช็คว่ามีตารางหรือยัง ถ้ายังให้สร้างอัตโนมัติ (หรือใช้ตารางเดิมก็ได้)
+            const { data, error } = await supabaseClient.from('journal_users').insert([{ username: u, pin: p }]).select().single();
+            if (error) { err.textContent = 'ชื่อผู้ใช้นี้อาจถูกใช้งานแล้ว หรือยังไม่ได้สร้างตาราง'; err.classList.remove('hidden'); return; }
+
+            currentUser = data;
+            localStorage.setItem('journal_user', JSON.stringify(currentUser));
+            init();
+        }
+
+        async function fetchData() {
+            const { data: dData } = await supabaseClient.from('diaries').select('*').eq('user_id', currentUser.id).order('date', { ascending: false });
+            diaries = dData || [];
+
+            const { data: tData } = await supabaseClient.from('transactions').select('*').eq('user_id', currentUser.id).order('date', { ascending: false });
+            transactions = tData || [];
+        }
+
+        // หน้าแดชบอร์ดหลัก
+        function renderDashboard() {
+            let totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
+            let totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
+            let balance = totalIncome - totalExpense;
+
+            document.getElementById('app').innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-100">สวัสดี, ${currentUser.username}</h2>
+                        <p class="text-xs text-slate-400">บันทึกชีวิตและกระเป๋าเงิน</p>
+                    </div>
+                    <button onclick="logout()" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs px-3 py-1.5 rounded-lg transition">ออกระบบ</button>
+                </div>
+
+                <!-- Tab Menu -->
+                <div class="flex bg-slate-900 p-1 rounded-xl mb-4">
+                    <button onclick="switchTab('diary')" class="flex-1 py-2 text-xs font-semibold rounded-lg transition ${activeTab === 'diary' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'}">📖 ไดอารี่</button>
+                    <button onclick="switchTab('money')" class="flex-1 py-2 text-xs font-semibold rounded-lg transition ${activeTab === 'money' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'}">💰 รายรับ-รายจ่าย</button>
+                </div>
+
+                ${activeTab === 'diary' ? renderDiaryView() : renderMoneyView(balance, totalIncome, totalExpense)}
+            `;
+        }
+
+        function switchTab(tab) {
+            activeTab = tab;
+            renderDashboard();
+        }
+
+        // --- ส่วนไดอารี่ ---
+        function renderDiaryView() {
+            return `
+                <button onclick="renderAddDiary()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-xl text-sm mb-4 transition shadow-lg shadow-emerald-600/20">+ เขียนไดอารี่วันนี้</button>
+                <div class="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+                    ${diaries.length === 0 ? '<p class="text-center text-slate-500 text-sm py-8">ยังไม่มีบันทึกไดอารี่</p>' : ''}
+                    ${diaries.map(d => `
+                        <div class="bg-slate-900 border border-slate-700/60 p-4 rounded-xl">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-xs text-emerald-400 font-semibold">${d.date}</span>
+                                <button onclick="deleteDiary('${d.id}')" class="text-red-400 text-xs">🗑️</button>
+                            </div>
+                            <h3 class="font-bold text-sm text-slate-200 mb-1">${d.title}</h3>
+                            <p class="text-xs text-slate-400 whitespace-pre-line">${d.content}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderAddDiary() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('app').innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-base font-bold">เขียนไดอารี่</h2>
+                    <button onclick="renderDashboard()" class="text-slate-400 text-sm">✕ ยกเลิก</button>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">วันที่</label>
+                        <input type="date" id="d-date" value="${today}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">หัวข้อเรื่องราว</label>
+                        <input type="text" id="d-title" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" placeholder="วันนี้เจออะไรมาบ้าง...">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">เนื้อหา</label>
+                        <textarea id="d-content" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" placeholder="ระบายความรู้สึก หรือบันทึกเรื่องราว..."></textarea>
+                    </div>
+                    <button onclick="saveDiary()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl text-sm transition">บันทึกไดอารี่</button>
+                </div>
+            `;
+        }
+
+        async function saveDiary() {
+            const date = document.getElementById('d-date').value;
+            const title = document.getElementById('d-title').value.trim();
+            const content = document.getElementById('d-content').value.trim();
+            if (!title || !content) { alert('กรุณากรอกหัวข้อและเนื้อหา'); return; }
+
+            await supabaseClient.from('diaries').insert([{ user_id: currentUser.id, date, title, content }]);
+            await fetchData();
+            renderDashboard();
+        }
+
+        async function deleteDiary(id) {
+            if (confirm('ต้องการลบไดอารี่นี้ใช่หรือไม่?')) {
+                await supabaseClient.from('diaries').delete().eq('id', id);
+                await fetchData();
+                renderDashboard();
+            }
+        }
+
+        // --- ส่วนรายรับ-รายจ่าย ---
+        function renderMoneyView(balance, income, expense) {
+            return `
+                <div class="bg-slate-900 border border-slate-700/60 p-4 rounded-xl mb-4 text-center">
+                    <p class="text-xs text-slate-400">ยอดเงินคงเหลือ</p>
+                    <h3 class="text-2xl font-bold ${balance >= 0 ? 'text-emerald-400' : 'text-red-400'} mt-1">฿${balance.toLocaleString()}</h3>
+                    <div class="flex justify-around mt-3 pt-3 border-t border-slate-800 text-xs">
+                        <div><span class="text-slate-400">รายรับ:</span> <span class="text-emerald-400 font-semibold">+$${income.toLocaleString()}</span></div>
+                        <div><span class="text-slate-400">รายจ่าย:</span> <span class="text-red-400 font-semibold">-$${expense.toLocaleString()}</span></div>
+                    </div>
+                </div>
+
+                <button onclick="renderAddMoney()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-xl text-sm mb-4 transition shadow-lg shadow-emerald-600/20">+ บันทึกรายรับ / รายจ่าย</button>
+                
+                <div class="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+                    ${transactions.length === 0 ? '<p class="text-center text-slate-500 text-sm py-6">ยังไม่มีรายการเงิน</p>' : ''}
+                    ${transactions.map(t => `
+                        <div class="bg-slate-900 border border-slate-700/60 px-4 py-3 rounded-xl flex justify-between items-center">
+                            <div>
+                                <span class="text-xs text-slate-400">${t.date} | <span class="text-slate-300 font-medium">${t.category}</span></span>
+                                <p class="text-xs font-semibold text-slate-200 mt-0.5">${t.note || (t.type === 'income' ? 'รายรับ' : 'รายจ่าย')}</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="text-sm font-bold ${t.type === 'income' ? 'text-emerald-400' : 'text-red-400'}">
+                                    ${t.type === 'income' ? '+' : '-'}${Number(t.amount).toLocaleString()}
+                                </span>
+                                <button onclick="deleteMoney('${t.id}')" class="text-red-400 text-xs">🗑️</button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderAddMoney() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('app').innerHTML = `
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-base font-bold">บันทึกรายรับ-รายจ่าย</h2>
+                    <button onclick="renderDashboard()" class="text-slate-400 text-sm">✕ ยกเลิก</button>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">ประเภท</label>
+                        <select id="m-type" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                            <option value="expense">รายจ่าย</option>
+                            <option value="income">รายรับ</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">จำนวนเงิน (บาท)</label>
+                        <input type="number" id="m-amount" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" placeholder="0.00">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">หมวดหมู่</label>
+                        <input type="text" id="m-category" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" placeholder="เช่น อาหาร, เงินเดือน, ช้อปปิ้ง">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">หมายเหตุ (ถ้ามี)</label>
+                        <input type="text" id="m-note" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" placeholder="รายละเอียดเพิ่มเติม">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">วันที่</label>
+                        <input type="date" id="m-date" value="${today}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <button onclick="saveMoney()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl text-sm transition">บันทึกรายการ</button>
+                </div>
+            `;
+        }
+
+        async function saveMoney() {
+            const type = document.getElementById('m-type').value;
+            const amount = document.getElementById('m-amount').value;
+            const category = document.getElementById('m-category').value.trim() || 'ทั่วไป';
+            const note = document.getElementById('m-note').value.trim();
+            const date = document.getElementById('m-date').value;
+
+            if (!amount || Number(amount) <= 0) { alert('กรุณากรอกจำนวนเงินให้ถูกต้อง'); return; }
+
+            await supabaseClient.from('transactions').insert([{ user_id: currentUser.id, type, amount: Number(amount), category, note, date }]);
+            await fetchData();
+            renderDashboard();
+        }
+
+        async function deleteMoney(id) {
+            if (confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) {
+                await supabaseClient.from('transactions').delete().eq('id', id);
+                await fetchData();
+                renderDashboard();
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('journal_user');
+            currentUser = null;
+            init();
+        }
+
+        init();
+    </script>
+</body>
+</html>
